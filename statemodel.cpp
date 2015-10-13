@@ -58,6 +58,7 @@ class State{
     //todo: handle soft hands
     if(score>21){
       //todo: busted
+      final=true;
     }
     return hash();
   }
@@ -79,7 +80,18 @@ class State{
   float QsD(){ //double
     return 0;
   }
-
+  float applyP(int card){
+    assert(playerCards.size() == 2); //can't split otherwise!
+    assert(playerCards[0]==playerCards[1]);
+    playerCards[1]=card;
+    score = playerCards[0] + playerCards[1];
+    //todo: handle soft hands
+    if(score>21){
+      //todo: busted
+      final=true;
+    }
+    return hash();
+  }
   float QsP(){ //sPlit
     return 0;
   }
