@@ -2,28 +2,48 @@
 #include <vector>
 #include <map>
 #include <cassert>
-
+#include <cmath>
 using namespace std;
 float P_FACECARD = (4.f/13);
 float P_NUMCARD = (1.f/13);
 class State{
+public:
 	bool canSplit;
-	bool final;
-	int value;
+	bool final,over;
+	int score,dealerScore;
+  float bet;
   float V;char action;
 	vector<int>dealerCards;
 	vector<int>playerCards;
   State(){
-    V=0;value=0;canSplit=false;final=false;
+    bet=1;over=false;
+    action='N';
+    V=0;score=dealerScore=0;canSplit=false;final=false;
+  }
+  void init(int p1,int p2,int d){
+    playerCards.clear();
+    playerCards.push_back(p1);
+    playerCards.push_back(p2);
+    score=p1+p2;
+    cout<<score<<endl;
+    dealerCards.clear();
+    dealerCards.push_back(d);
+    dealerScore=d;
+    bet=1;
+    over=final=false;
+    if(p1==p2)
+      canSplit=true;
+    else
+      canSplit=false;
   }
   int hash(){
     int h=0;
-    assert(value <= 31);//value cant be more than 31!
-    h += value; //5 bits
+    assert(score <= 31);//score cant be more than 31!
+    h += score; //5 bits
     bool hasAce = 0;
     for(auto &c:playerCards)
       if(c==1)
-        hasAce=1
+        hasAce=1;
     if(hasAce){
       h += 32 * hasAce;
       h += 128 * playerCards[0];
@@ -34,7 +54,7 @@ class State{
       h+= 128 * playerCards[0];//4 bits
     }
     h+= 128*16 * dealerCards[0];//4 bits
-    assert(h < 128*32);
+    assert(h < 128*16*16);
     return h;
   }
   //state change by actions
@@ -43,7 +63,7 @@ class State{
     return hash();
   }
   float QsS(map<int,State> &states){ //stand
-    h=applyS();
+    int h=applyS();
     auto res=states.find(h);
     if(res == states.end()){
       auto res2 = states.insert(make_pair(h,*this));
@@ -53,11 +73,11 @@ class State{
   }
   int applyH(int card){ // modifies self state deterministically (takes all parameters that can be random) and returns hash of new state.
     assert(playerCards.size() >= 2); //can't hit otherwise!
+    canSplit=false; //cant split anymore!
     playerCards.push_back(card);
     score += card;
     //todo: handle soft hands
-    if(score>21){
-      //todo: busted
+    if(score>=21){
       final=true;
     }
     return hash();
@@ -77,8 +97,8 @@ class State{
     }
     return Q;
   }
-  float QsD(){ //double
-    return 0;
+  float QsD(map<int,State> &states){ //double
+    return -1000;
   }
   float applyP(int card){
     assert(playerCards.size() == 2); //can't split otherwise!
@@ -86,45 +106,138 @@ class State{
     playerCards[1]=card;
     score = playerCards[0] + playerCards[1];
     //todo: handle soft hands
-    if(score>21){
-      //todo: busted
+    if(playerCards[0]==playerCards[1])
+      canSplit=true;
+    if(score>=21){
       final=true;
     }
     return hash();
   }
-  float QsP(){ //sPlit
-    return 0;
+  float QsP(map<int,State> states){ //sPlit
+    State initial = *this;
+    int h; float Q=0;
+    for(int i=1;i<=10;i++){
+      h=applyP(i);
+      auto res=states.find(h);
+      if(res == states.end()){
+        auto res2=states.insert(make_pair(h,*this));
+        res=res2.first;
+      }
+      Q+=res->second.V*(i==10?P_FACECARD:P_NUMCARD);
+      *this = initial; //reset to original
+    }
+    return Q;
   }
-
+  int applyE(int card){ // modifies self state deterministically (takes all parameters that can be random) and returns hash of new state.
+    assert(dealerCards.size() >= 1); //can't hit otherwise!
+    dealerCards.push_back(card);
+    dealerScore += card;
+    //todo: handle soft hands
+    if(score>21){//player busted
+      over=true;
+      V=-bet;
+    }else if(dealerScore>21){
+      //dealer busted
+      over=true;
+      V=bet;
+    }else if(score == dealerScore){
+      over=true;
+      V=0;
+    }else if(dealerScore > score){
+      over=true;
+      V=-bet;
+    }
+    return hash();
+  }
+  float QsE(map<int,State> states){ //end the game
+    State initial = *this;
+    int h; float Q=0,V1=0;
+    for(int i=1;i<=10;i++){
+      h=applyE(i);
+      if(over){
+        V1=V;
+      }else{
+        auto res=states.find(h);
+        if(res == states.end()){
+          auto res2=states.insert(make_pair(h,*this));
+          res=res2.first;
+        }
+        V1=res->second.V;
+      }
+      Q+=V1*(i==10?P_FACECARD:P_NUMCARD);
+      *this = initial; //reset to original
+    }
+    return Q;
+  }
   float nextV(map<int,State> &states){//calc's next value of V and returns the difference.
     float V1=0;
-    if(final){
-      //TODO: do dealer hits and end game
+    if(over){
+      V1=0;
+    }else if(final){
+      V1=QsE(states);
+      action='E';
     }else{
       float QH,QD,QP,QS;
       QH=QsH(states);
       QD=QsD(states);
-      QP=QsP(states);
+      if(canSplit)
+        QP=QsP(states);
       QS=QsS(states);
       float max=QH;char argMax='H';
       if(QD>max)
         max=QP,argMax='D';
-      if(QP>max)
+      if(canSplit && QP>max)
         max=QP,argMax='P';
       if(QS>max)
         max=QS,argMax='S';
       action=argMax;
       V1=max;
+      cerr<<argMax<<endl;
     }
     float diff = V1-V;
     V=V1;
     return diff;
+  }
+  void print(){
+    cout<<"P(";
+    for(auto &p:playerCards)
+      cout<<p<<",";
+    cout<<") D(";
+    for(auto &d:dealerCards)
+      cout<<d<<",";
+    cout<<")";
+    printf(" - %c (%f)\n",action,V);
   }
 };
 
 int main(){
   map<int,State> states;
   //todo: list all initial states
+  for(int i=1;i<=10;i++){
+    for(int j=i;j<=10;j++){
+      for(int k=1;k<=10;k++){
+        State s;
+        s.init(i,j,k);
+        states.insert(make_pair(s.hash(),s));
+      }
+    }
+  }
+
   //todo: do value iteration on all states in map
+  cout<<"Num initial states: "<<states.size()<<endl;
+  float maxDelta=1000,delta;
+  while(maxDelta>0.01){
+    cerr<<"maxDelta: "<<maxDelta<<endl;
+    maxDelta = 0;
+    for(auto &s:states){
+      delta=fabs(s.second.nextV(states));
+      if(delta>maxDelta)
+        maxDelta=delta;
+    }
+  }
+  cout<<"Num total states: "<<states.size()<<endl;
+  for(auto &s:states){
+    s.second.print();
+  }
 	return 0 ;
 }
