@@ -5,25 +5,35 @@
 #include <cmath>
 #include <cstdlib>
 #include <string>
+
 using namespace std;
+
 float P_FACECARD = (4.f/13);
 float P_NUMCARD = (1.f/13);
+
 class State{
 public:
-  string why;
+
+	string why;
 	bool canSplit;
 	bool final,over;
+	
 	int score,dealerScore;
-  float bet;
-  float V;char action;
+	
+	float bet;
+	float V;char action;
+
 	vector<int>dealerCards;
 	vector<int>playerCards;
+
+
   State(){
     bet=1;over=false;
     action='N';
     V=2.5*rand()/float(RAND_MAX-1)-1;
     score=dealerScore=0;canSplit=false;final=false;
   }
+  
   void init(int p1,int p2,int d){
     playerCards.clear();
     playerCards.push_back(p1);
@@ -39,6 +49,7 @@ public:
     else
       canSplit=false;
   }
+  
   int hash(){
     int h=0;
     assert(score <= 31);//score cant be more than 31!
@@ -83,10 +94,28 @@ public:
   int applyH(int card){ // modifies self state deterministically (takes all parameters that can be random) and returns hash of new state.
     assert(playerCards.size() >= 2); //can't hit otherwise!
     canSplit=false; //cant split anymore!
-    playerCards.push_back(card);
-    score += card;
+
     //todo: handle soft hands
-    if(score>=21){
+	//11 means we treated ace as 11 and 1 means we treated ace as 1 but we get card as 1 which represents an ace
+
+	if(card==1 && score+11<=21){
+    	playerCards.push_back(11);
+    	score+=11;
+	}
+	else{
+		playerCards.push_back(card);
+    	score+=card;
+	}
+    if(score>21){
+    	for(int i = 0 ; i<playerCards.size() ; i++){
+    		if(playerCards[i] == 11){
+    			playerCards[i] = 1 ;
+				score-=10 ;
+    			break;
+			}
+		}
+	}
+	if(score>=21){
       final=true;
       why="busted while hitting";
     }
@@ -110,15 +139,26 @@ public:
   float QsD(map<int,State> &states){ //double
     return -1000;
   }
-  float applyP(int card){
+  float applyP(int card){ // split can occur only when we have 2 cards of same denomination so y do we need a argument here ** no need to use card argument here **
     assert(playerCards.size() == 2); //can't split otherwise!
     assert(playerCards[0]==playerCards[1]);
-    playerCards[1]=card;
-    score = playerCards[0] + playerCards[1];
-    //todo: handle soft hands
+    
+	playerCards[1]=card; // y u setting pCards[1] = card
+    
+	score = playerCards[0] + playerCards[1];
+    
+    //todo: handle soft hands 
+    /*
+	Note a hand is called soft hand if any Ace
+	is treated as 11 which would result in bust
+	if both cards are same, so no soft hands in
+	case of split. 
+	P.S. : Please read the assignment specs once plz
+	*/
+    
     if(playerCards[0]==playerCards[1])
       canSplit=true;
-    if(score>=21){
+    if(score>=21){ // how can someone bust if they have only 2 cards
       final=true;
       why="busted while splitting";
     }
@@ -139,17 +179,36 @@ public:
     }
     return Q;
   }
+
   int applyE(int card){ // modifies self state deterministically (takes all parameters that can be random) and returns hash of new state.
     assert(dealerCards.size() >= 1); //can't hit otherwise!
     if(score>21){//player busted
       over=true;
       V=-bet;
     }else if(dealerScore < 17){
-      dealerCards.push_back(card);
-      dealerScore += card;
+      if(card == 1){ //if card is ace then we chose most favourable value
+      	if(dealerScore+10<=21){
+      		dealerScore+=11 ;
+      		dealerCards.push_back(11);
+		}
+	  }else{
+	  	dealerScore += card;
+	  	dealerCards.push_back(card);
+	  }
     }else{
-      //todo: handle soft hands
-      over=true;
+      //todo: handle soft hands 
+      //dealer might have an ace in his hand earlier so we need to reduce the value by 10 and need to draw another card but place 11 or 1 in the card deac to denote what value of ace u considered
+	  for(int i = 0 ; i< dealerCards.size() ; i++){
+      	 if(dealerCards[i] == 11 && dealerScore>21){
+      		dealerCards[i] = 1 ;
+      		dealerScore-=10 ;
+ 			  break;
+		 }
+	  }
+	  if(dealerScore<17){
+	  	//TODO: draw an other card
+	  }
+	  over=true;
       if(dealerScore>21){
         //dealer busted
         V=bet;
@@ -165,6 +224,7 @@ public:
     }
     return hash();
   }
+
   float QsE(map<int,State> states){ //end the game
     State initial = *this;
     int h; float Q=0,V1=0;
@@ -185,6 +245,7 @@ public:
     }
     return Q;
   }
+
   float nextV(map<int,State> &states){//calc's next value of V and returns the difference.
     float V1=0;
     if(over){
@@ -227,9 +288,9 @@ public:
   }
 };
 
+map<int,State> states;
 int main(){
-  map<int,State> states;
-  //todo: list all initial states
+  //todo: list all initial states -- i think the things that u have done below is state initialization
   for(int i=1;i<=10;i++){
     for(int j=i;j<=10;j++){
       for(int k=1;k<=10;k++){
@@ -242,8 +303,10 @@ int main(){
 
   //todo: do value iteration on all states in map
   cout<<"Num initial states: "<<states.size()<<endl;
+
   float maxDelta=1000,delta;
   int minN=15;int n=0;
+
   while(n<minN || maxDelta>0.01){
     cerr<<"maxDelta: "<<maxDelta<<endl;
     maxDelta = 0;
@@ -254,7 +317,9 @@ int main(){
     }
     n++;
   }
+
   cout<<"Num total states: "<<states.size()<<endl;
+
   for(auto &s:states){
     s.second.print();
   }
