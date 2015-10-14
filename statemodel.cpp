@@ -3,11 +3,14 @@
 #include <map>
 #include <cassert>
 #include <cmath>
+#include <cstdlib>
+#include <string>
 using namespace std;
 float P_FACECARD = (4.f/13);
 float P_NUMCARD = (1.f/13);
 class State{
 public:
+  string why;
 	bool canSplit;
 	bool final,over;
 	int score,dealerScore;
@@ -18,14 +21,14 @@ public:
   State(){
     bet=1;over=false;
     action='N';
-    V=0;score=dealerScore=0;canSplit=false;final=false;
+    V=2.5*rand()/float(RAND_MAX-1)-1;
+    score=dealerScore=0;canSplit=false;final=false;
   }
   void init(int p1,int p2,int d){
     playerCards.clear();
     playerCards.push_back(p1);
     playerCards.push_back(p2);
     score=p1+p2;
-    cout<<score<<endl;
     dealerCards.clear();
     dealerCards.push_back(d);
     dealerScore=d;
@@ -39,15 +42,16 @@ public:
   int hash(){
     int h=0;
     assert(score <= 31);//score cant be more than 31!
+    assert(dealerScore <= 31);
     h += score; //5 bits
     bool hasAce = 0;
-    for(auto &c:playerCards)
-      if(c==1)
-        hasAce=1;
-    if(hasAce){
-      h += 32 * hasAce;
-      h += 128 * playerCards[0];
-    }
+    // for(auto &c:playerCards)
+    //   if(c==1)
+    //     hasAce=1;
+    // if(hasAce){
+    //   h += 32 * hasAce;
+    //   h += 128 * playerCards[0];
+    // }
     if(canSplit)
     {
       h+= 64 * 1;
@@ -55,20 +59,25 @@ public:
     }
     h+= 128*16 * dealerCards[0];//4 bits
     assert(h < 128*16*16);
+    h+= 128*256* dealerScore;
+    h+= 128*256*32 * (final?1:0);
     return h;
   }
   //state change by actions
   int applyS(){
     final = true;
+    why="stood";
     return hash();
   }
   float QsS(map<int,State> &states){ //stand
+    State initial = *this;
     int h=applyS();
     auto res=states.find(h);
     if(res == states.end()){
       auto res2 = states.insert(make_pair(h,*this));
       res = res2.first;
     }
+    *this = initial;
     return res->second.V;
   }
   int applyH(int card){ // modifies self state deterministically (takes all parameters that can be random) and returns hash of new state.
@@ -79,6 +88,7 @@ public:
     //todo: handle soft hands
     if(score>=21){
       final=true;
+      why="busted while hitting";
     }
     return hash();
   }
@@ -110,6 +120,7 @@ public:
       canSplit=true;
     if(score>=21){
       final=true;
+      why="busted while splitting";
     }
     return hash();
   }
@@ -130,22 +141,27 @@ public:
   }
   int applyE(int card){ // modifies self state deterministically (takes all parameters that can be random) and returns hash of new state.
     assert(dealerCards.size() >= 1); //can't hit otherwise!
-    dealerCards.push_back(card);
-    dealerScore += card;
-    //todo: handle soft hands
     if(score>21){//player busted
       over=true;
       V=-bet;
-    }else if(dealerScore>21){
-      //dealer busted
+    }else if(dealerScore < 17){
+      dealerCards.push_back(card);
+      dealerScore += card;
+    }else{
+      //todo: handle soft hands
       over=true;
-      V=bet;
-    }else if(score == dealerScore){
-      over=true;
-      V=0;
-    }else if(dealerScore > score){
-      over=true;
-      V=-bet;
+      if(dealerScore>21){
+        //dealer busted
+        V=bet;
+      }else if(score == dealerScore){
+        V=0;
+      }else if(dealerScore > score){
+        V=-bet;
+      }else if(score == 21){
+        V=1.5*bet;
+      }else if(score>dealerScore){
+        V=bet;
+      }
     }
     return hash();
   }
@@ -173,6 +189,7 @@ public:
     float V1=0;
     if(over){
       V1=0;
+      action='N';
     }else if(final){
       V1=QsE(states);
       action='E';
@@ -192,7 +209,7 @@ public:
         max=QS,argMax='S';
       action=argMax;
       V1=max;
-      cerr<<argMax<<endl;
+      // cerr<<argMax<<endl;
     }
     float diff = V1-V;
     V=V1;
@@ -206,7 +223,7 @@ public:
     for(auto &d:dealerCards)
       cout<<d<<",";
     cout<<")";
-    printf(" - %c (%f)\n",action,V);
+    printf(" - %c (%f) %d %s\n",action,V,final,why.c_str());
   }
 };
 
@@ -226,7 +243,8 @@ int main(){
   //todo: do value iteration on all states in map
   cout<<"Num initial states: "<<states.size()<<endl;
   float maxDelta=1000,delta;
-  while(maxDelta>0.01){
+  int minN=15;int n=0;
+  while(n<minN || maxDelta>0.01){
     cerr<<"maxDelta: "<<maxDelta<<endl;
     maxDelta = 0;
     for(auto &s:states){
@@ -234,6 +252,7 @@ int main(){
       if(delta>maxDelta)
         maxDelta=delta;
     }
+    n++;
   }
   cout<<"Num total states: "<<states.size()<<endl;
   for(auto &s:states){
